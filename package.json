@@ -1,0 +1,21 @@
+{
+  "name": "replit-b2c-playwright",
+  "version": "1.0.0",
+  "description": "Playwright TypeScript place-order flow test against the Replit restaurant delivery/takeaway demo template",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "test:e2e": "playwright test tests/e2e",
+    "test:device-orders": "playwright test tests/place-order-device-matrix.spec.ts --project=device-orders --workers=1",
+    "merge:device-orders": "tsx scripts/merge-device-order-results.ts",
+    "install:browsers": "playwright install --with-deps chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0",
+    "@types/node": "^22.7.5",
+    "exceljs": "^4.4.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.3"
+  }
+}
