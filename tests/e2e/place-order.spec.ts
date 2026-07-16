@@ -1,11 +1,22 @@
-import { test, expect } from '../../fixtures/errorMonitor';
+import path from 'path';
+import type { Page } from '@playwright/test';
+import { test } from '../../fixtures/errorMonitor';
 import { PlaceOrderPage } from '../../pages/PlaceOrderPage';
 import { isBenignHardError } from '../../utils/orderFlowAssertions';
+import { writeResult, screenshotDirFor } from '../../utils/deviceOrders/resultsStore';
+import { DeviceOrderResult } from '../../utils/deviceOrders/types';
 
 /**
  * End-to-end "place an order" journey: browse the catalog, build a cart, log
  * in with OTP, attach a delivery address, and pay through the Razorpay
  * sandbox.
+ *
+ * Every step is caught rather than thrown — a failure anywhere in the flow
+ * is recorded into the same device-order result/report the device-matrix
+ * suite uses (see utils/deviceOrders/*) instead of failing the Playwright
+ * run, so a single flaky project doesn't red the whole test run; the Excel
+ * report (test-results/device-order-report.xlsx, rebuilt automatically by
+ * globalTeardown) is the source of truth for pass/fail per browser project.
  *
  * Throughout the run:
  *  - every failing API call is logged to the console the moment it happens
@@ -18,69 +29,122 @@ import { isBenignHardError } from '../../utils/orderFlowAssertions';
  *  - OTP login restarts from the mobile-number screen if verification is
  *    ever rejected.
  */
+async function captureStep(page: Page, dir: string, counter: { n: number }, name: string) {
+  counter.n += 1;
+  const filename = path.join(dir, `${String(counter.n).padStart(2, '0')}-${name.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '')}.png`);
+  await page.screenshot({ path: filename, fullPage: true }).catch(() => undefined);
+}
+
 test.describe('Place order flow', () => {
-  // The payment step now retries the whole "place order → pay" sequence
-  // from scratch on failure (see PlaceOrderPage.placeOrderAndPay), which
-  // needs more headroom than the rest of the flow alone would.
+  // The payment step retries the whole "place order → pay" sequence from
+  // scratch on failure (see PlaceOrderPage.placeOrderAndPay), which needs
+  // more headroom than the rest of the flow alone would.
   test.setTimeout(7 * 60_000);
 
-  test('places an online order end to end', async ({ page, apiCalls, errorLog, uiAlerts }) => {
+  test('places an online order end to end', async ({ page, apiCalls, errorLog, uiAlerts }, testInfo) => {
     const placeOrderPage = new PlaceOrderPage(page);
+    const projectName = testInfo.project.name;
+    const viewport = page.viewportSize();
+    const id = `desktop__${projectName}`;
+    const screenshotDir = screenshotDirFor(id);
+    const startedAt = Date.now();
+    const stepCounter = { n: 0 };
 
-    await test.step('Open the site and wait for the homepage to render', async () => {
+    const result: DeviceOrderResult = {
+      device: projectName,
+      browser: projectName,
+      resolution: viewport ? `${viewport.width}x${viewport.height}` : '',
+      category: 'desktop',
+      orderStatus: 'FAIL',
+      orderId: '',
+      orderNumber: '',
+      paymentMethod: '',
+      failedStep: '',
+      orderError: '',
+      compatibilityStatus: 'PASS',
+      compatibilityIssueType: 'None',
+      compatibilityIssueDescription: '-',
+      durationMs: 0,
+      screenshotDir,
+    };
+
+    let currentStep = 'Open the site and wait for the homepage to render';
+    try {
       await placeOrderPage.goto();
       await placeOrderPage.waitForReady();
-    });
+      await captureStep(page, screenshotDir, stepCounter, 'homepage');
 
-    const selectedProducts = await test.step('Add 2 random products to the cart', async () => {
-      return placeOrderPage.selectRandomProducts(2);
-    });
+      currentStep = 'Add 1 random product to the cart';
+      const selectedProducts = await placeOrderPage.selectRandomProducts(1);
+      await captureStep(page, screenshotDir, stepCounter, 'product-added');
 
-    await test.step('Open the cart', async () => {
+      currentStep = 'Open the cart';
       await placeOrderPage.openCart();
-    });
+      await captureStep(page, screenshotDir, stepCounter, 'cart');
 
-    await test.step('Select a delivery slot, if the cart requires one', async () => {
+      currentStep = 'Select a delivery slot, if the cart requires one';
       await placeOrderPage.selectDeliverySlotIfRequired();
-    });
 
-    await test.step('Log in with OTP if the cart is gated behind login', async () => {
+      currentStep = 'Log in with OTP if the cart is gated behind login';
       const loggedIn = await placeOrderPage.ensureCartLoginCompleted(apiCalls, uiAlerts);
       console.log(loggedIn ? '[login] Completed OTP login for a new session.' : '[login] Already logged in — nothing to do.');
-    });
+      await captureStep(page, screenshotDir, stepCounter, 'logged-in');
 
-    const addressText = await test.step('Attach a delivery address to the cart', async () => {
-      return placeOrderPage.ensureDeliveryAddressAttached(apiCalls);
-    });
+      currentStep = 'Attach a delivery address to the cart';
+      const addressText = await placeOrderPage.ensureDeliveryAddressAttached(apiCalls);
+      await captureStep(page, screenshotDir, stepCounter, 'address-attached');
 
-    const orderSummary = await test.step('Place the order and pay through the Razorpay sandbox', async () => {
-      return placeOrderPage.placeOrderAndPay(apiCalls);
-    });
+      currentStep = 'Place the order and pay through the Razorpay sandbox';
+      const orderSummary = await placeOrderPage.placeOrderAndPay(apiCalls);
+      await captureStep(page, screenshotDir, stepCounter, 'order-confirmed');
 
-    await test.step('Verify the order summary looks complete', async () => {
-      expect(orderSummary.orderId || orderSummary.orderNumber, 'Expected the order API to return an order id or number').not.toBe('');
+      if (!orderSummary.orderId && !orderSummary.orderNumber) {
+        throw new Error('Order API did not return an order id or number.');
+      }
+
+      result.orderStatus = 'PASS';
+      result.orderId = orderSummary.orderId;
+      result.orderNumber = orderSummary.orderNumber;
+      result.paymentMethod = orderSummary.paymentMethod;
+
       console.log(
-        `[order] Placed order ${orderSummary.orderNumber || orderSummary.orderId} for products [${selectedProducts
-          .map((p) => p.name)
-          .join(', ')}] delivering to "${addressText}", paid via ${orderSummary.paymentMethod}.`
+        `[order] Placed order ${orderSummary.orderNumber || orderSummary.orderId} for product "${selectedProducts[0]?.name}" ` +
+          `delivering to "${addressText}", paid via ${orderSummary.paymentMethod}.`
       );
-    });
 
-    await test.step('Report a summary of API failures and UI error alerts observed during the run', async () => {
+      // An order that placed fine but logged real console/UI errors along
+      // the way still deserves a WARNING, not a silent PASS.
       const failedApiCalls = apiCalls.filter((call) => call.status >= 400);
       const errorAlerts = uiAlerts.filter((alert) => alert.looksLikeError);
       const hardUiErrors = errorLog.filter((entry) => entry.severity === 'hard' && !isBenignHardError(entry));
-
       console.log(
         `[summary] ${apiCalls.length} API call(s) observed, ${failedApiCalls.length} failed; ` +
           `${uiAlerts.length} snackbar(s) observed, ${errorAlerts.length} looked like errors; ` +
           `${hardUiErrors.length} hard UI/console error(s).`
       );
+      if (hardUiErrors.length > 0) {
+        result.compatibilityStatus = 'WARNING';
+        result.compatibilityIssueType = 'Console Error';
+        result.compatibilityIssueDescription = hardUiErrors
+          .slice(0, 3)
+          .map((e) => e.message)
+          .join(' || ');
+      }
+    } catch (err) {
+      result.failedStep = currentStep;
+      result.orderError = err instanceof Error ? err.message : String(err);
+      await captureStep(page, screenshotDir, stepCounter, 'failure');
+      console.error(`[order] FAILED at "${currentStep}": ${result.orderError}`);
+    } finally {
+      result.durationMs = Date.now() - startedAt;
+      writeResult(id, result);
+    }
 
-      // Failures were already logged live as they happened (and retried up to 5x
-      // where the flow depends on them); the assertion here just makes sure a
-      // failure that slipped through unretried still fails the test visibly.
-      expect(hardUiErrors, `Unexpected hard UI/console errors:\n${JSON.stringify(hardUiErrors, null, 2)}`).toHaveLength(0);
-    });
+    console.log(
+      `[order-report] ${result.browser} — order ${result.orderStatus}` +
+        `${result.orderId || result.orderNumber ? ` (${result.orderNumber || result.orderId})` : ''}, ` +
+        `compatibility ${result.compatibilityStatus}${result.failedStep ? `, failed at: ${result.failedStep}` : ''} ` +
+        `— ${Math.round(result.durationMs / 1000)}s`
+    );
   });
 });

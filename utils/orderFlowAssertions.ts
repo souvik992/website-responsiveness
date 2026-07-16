@@ -6,6 +6,16 @@ export type ApiPredicate = (call: ApiCall) => boolean;
 
 const BENIGN_HARD_ERROR_PATTERNS: RegExp[] = [
   /blocked by cors policy/i,
+  // Firefox's own phrasing for the same cross-origin image load Chrome/WebKit
+  // report as "blocked by CORS policy" above — confirmed live on
+  // desktop-firefox, where the offending storage.googleapis.com URL sits in
+  // the message text rather than `entry.url`, so the URL-based allowlist
+  // below doesn't catch it and this message-based match is needed too.
+  /cross-origin request blocked/i,
+  // Firefox's third-party-cookie warning for Razorpay's own fraud-detection
+  // script (api.sardine.ai) — a standard SameSite enforcement notice, not
+  // specific to any one domain, so matched by message rather than URL.
+  /cookie .*rejected because it is in a cross-site context/i,
   /failed to load resource: net::err_failed/i,
   /failed to load resource: net::err_connection_refused/i,
   /refused to get unsafe header/i,
@@ -30,6 +40,9 @@ const BENIGN_UI_ERROR_URL_PATTERNS: RegExp[] = [
   /api\.razorpay\.com/i,
   /checkout-static-next\.razorpay\.com/i,
   /hcaptcha\.com/i,
+  // Razorpay's own embedded fraud-detection collector — same category as the
+  // razorpay.com/hcaptcha.com entries above.
+  /api\.sardine\.ai/i,
 ];
 
 const ALLOWED_FAILED_API_URL_PATTERNS: RegExp[] = [

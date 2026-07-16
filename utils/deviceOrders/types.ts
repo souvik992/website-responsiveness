@@ -5,7 +5,7 @@ export interface DeviceOrderResult {
   device: string;
   browser: string;
   resolution: string;
-  category: 'mobile' | 'tablet' | 'landscape';
+  category: 'mobile' | 'tablet' | 'landscape' | 'desktop';
 
   orderStatus: OrderStatus;
   orderId: string;
