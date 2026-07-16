@@ -53,9 +53,44 @@ export default defineConfig({
       use: { ...devices['iPhone XR'] },
     },
     {
-      name: 'chromium',
+      name: 'desktop-chrome',
       testIgnore: /place-order-device-matrix\.spec\.ts/,
       use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'desktop-firefox',
+      testIgnore: /place-order-device-matrix\.spec\.ts/,
+      use: { ...devices['Desktop Firefox'] },
+    },
+    {
+      name: 'desktop-webkit',
+      testIgnore: /place-order-device-matrix\.spec\.ts/,
+      use: { ...devices['Desktop Safari'] },
+    },
+    {
+      // Real Microsoft Edge (not just Chrome with an Edge UA) — needs the
+      // `msedge` channel installed via `playwright install msedge`.
+      name: 'desktop-edge',
+      testIgnore: /place-order-device-matrix\.spec\.ts/,
+      use: { ...devices['Desktop Edge'], channel: 'msedge' },
+    },
+    {
+      // Full HD — the most common external-monitor / laptop-docked resolution.
+      name: 'desktop-1920x1080',
+      testIgnore: /place-order-device-matrix\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'], viewport: { width: 1920, height: 1080 } },
+    },
+    {
+      // Most common laptop panel resolution.
+      name: 'desktop-1366x768',
+      testIgnore: /place-order-device-matrix\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'], viewport: { width: 1366, height: 768 } },
+    },
+    {
+      // Common 15"-16" laptop resolution, distinct aspect ratio from the above two.
+      name: 'desktop-1440x900',
+      testIgnore: /place-order-device-matrix\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } },
     },
     {
       // The device-matrix suite manages its own browsers/contexts per

@@ -1,0 +1,64 @@
+name: Place Order — Desktop Browsers
+
+# Manual trigger only — like the device matrix workflow, this places a real
+# order through the Razorpay sandbox for every desktop project that runs, so
+# it shouldn't fire on every push/PR. Trigger it from the Actions tab, and
+# re-run a single failed browser from there too (Actions → this run →
+# "Re-run jobs" → pick the one job you want, e.g. just desktop-firefox).
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'Target site URL'
+        required: false
+        default: 'https://restaurant-website-delivery-takeaway-default-template.replit.app'
+
+jobs:
+  desktop:
+    runs-on: ubuntu-latest
+    strategy:
+      # One browser failing (e.g. a real WebKit-specific bug) shouldn't cancel
+      # the others — each is independent, and failures are per-browser signal.
+      fail-fast: false
+      matrix:
+        project:
+          - desktop-chrome
+          - desktop-firefox
+          - desktop-webkit
+          - desktop-edge
+          - desktop-1920x1080
+          - desktop-1366x768
+          - desktop-1440x900
+    env:
+      BASE_URL: ${{ github.event.inputs.base_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # Only install the browser binary this matrix leg actually needs.
+      - name: Install browser for ${{ matrix.project }}
+        run: |
+          case "${{ matrix.project }}" in
+            desktop-firefox) npx playwright install --with-deps firefox ;;
+            desktop-webkit)  npx playwright install --with-deps webkit ;;
+            desktop-edge)    npx playwright install --with-deps msedge ;;
+            *)               npx playwright install --with-deps chromium ;;
+          esac
+
+      - name: Run tests/e2e on ${{ matrix.project }}
+        run: npx playwright test tests/e2e --project=${{ matrix.project }} --reporter=list
+
+      - name: Upload report for ${{ matrix.project }}
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-e2e-report-${{ matrix.project }}
+          path: playwright-report/
+          retention-days: 14
+          if-no-files-found: warn
