@@ -48,6 +48,11 @@ export default defineConfig({
       use: { ...devices['Pixel 7'] },
     },
     {
+      name: 'iphone-xr',
+      testIgnore: /place-order-device-matrix\.spec\.ts/,
+      use: { ...devices['iPhone XR'] },
+    },
+    {
       name: 'chromium',
       testIgnore: /place-order-device-matrix\.spec\.ts/,
       use: { ...devices['Desktop Chrome'] },
@@ -59,6 +64,14 @@ export default defineConfig({
       // every other project gets — it captures its own screenshots per step.
       name: 'device-orders',
       testMatch: /place-order-device-matrix\.spec\.ts/,
+      // Confirmed live: a wedged browser (seen once with WebKit on a long
+      // unattended run) can outlast its own test's timeout. A same-process
+      // retry wouldn't help — the fix that actually contains it is a fresh
+      // browser per device (no more cross-device sharing, see the spec file)
+      // — but this retry is the safety net if a device's browser is *still*
+      // unrecoverable: Playwright retries in a brand-new worker process,
+      // which guarantees a clean slate no in-process fix could.
+      retries: 1,
       use: { trace: 'off', video: 'off', screenshot: 'off' },
     },
   ],

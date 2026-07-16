@@ -347,9 +347,11 @@ export class PlaceOrderPage {
    * waiting for that button alone is not enough to know the catalog is ready.
    *
    * The serviceability check behind this is occasionally flaky for a coordinate
-   * that is, in fact, deliverable — a plain reload clears it. Retries a few
-   * times before giving up, the same "wake the API back up" idea used
-   * elsewhere in this flow.
+   * that is, in fact, deliverable — a plain reload alone can just reload back
+   * into the same not-deliverable state. Each retry instead reopens the header
+   * location picker and switches to "Use Current Location" first, so it isn't
+   * repeatedly hitting the exact same coordinate; falls back to a bare reload
+   * if that control can't be found. Retries a few times before giving up.
    */
   private async waitForCatalogToLoad(maxAttempts = 5) {
     // Matches a non-zero price specifically — the persistent cart total badge
@@ -368,14 +370,52 @@ export class PlaceOrderPage {
         return;
       }
 
-      console.warn(`[catalog] Location reported as not deliverable on attempt ${attempt}/${maxAttempts}; reloading and retrying.`);
       if (attempt < maxAttempts) {
-        await this.page.reload({ waitUntil: 'domcontentloaded' });
+        console.warn(`[catalog] Location reported as not deliverable on attempt ${attempt}/${maxAttempts}; changing address to current location and retrying.`);
+        const changedAddress = await this.changeAddressToCurrentLocation();
+        if (!changedAddress) {
+          await this.page.reload({ waitUntil: 'domcontentloaded' });
+        }
         await this.dismissBlockingModal();
       }
     }
 
     throw new Error(`Catalog never loaded — location kept reporting as not deliverable after ${maxAttempts} attempts.`);
+  }
+
+  /**
+   * Reopens the header's location picker via its "Change Address" control and
+   * selects "Use Current Location" (relies on the geolocation permission
+   * granted in playwright.config.ts). Returns whether it found the picker's
+   * current-location control at all, so callers can fall back to a plain
+   * reload when the header control isn't there to click.
+   */
+  private async changeAddressToCurrentLocation(): Promise<boolean> {
+    const addressOpener = this.page
+      .locator('[role="banner"], header')
+      .first()
+      .getByText(/india|bengaluru|karnataka|560\d{3}|delivery|change address/i)
+      .first();
+    if (await this.waitVisible(addressOpener, 5_000)) {
+      await addressOpener.click().catch(() => undefined);
+    }
+
+    const currentLocationButton = this.page.getByRole('button', { name: /use current location/i }).first();
+    if (!(await this.waitVisible(currentLocationButton, 5_000))) {
+      return false;
+    }
+    await currentLocationButton.click();
+
+    // Some entry points resolve and close the picker on their own once
+    // geolocation settles; others show a confirm step first — handle both,
+    // same pattern setDeliveryLocationViaSearch and saveNewCurrentLocationAddress use.
+    const confirmButton = this.page.getByRole('button', { name: /confirm|continue|use this location/i }).first();
+    if (await this.waitVisible(confirmButton, 10_000)) {
+      await confirmButton.click();
+    }
+
+    await this.page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => undefined);
+    return true;
   }
 
   /** Opens the cart, navigating directly to the route if the on-page trigger can't be found. */

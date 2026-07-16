@@ -67,34 +67,28 @@ const launchers: Record<BrowserEngine, (headless: boolean) => Promise<Browser>> 
   firefox: (headless) => firefox.launch({ headless }),
 };
 
-// One browser instance per engine, reused across every device that shares
-// it — launching fresh per device (200 of them) would be needlessly slow;
-// this suite is already serial, so reuse across devices in the same worker
-// is safe the same way responsive-visual.spec.ts's cache is.
-const browserCache = new Map<string, Promise<Browser>>();
-
-async function getBrowser(engine: BrowserEngine, headless: boolean): Promise<Browser> {
-  const cacheKey = `${engine}:${headless}`;
-  const cached = browserCache.get(cacheKey);
-  if (cached) {
-    const browser = await cached;
-    if (browser.isConnected()) return browser;
-    browserCache.delete(cacheKey);
-  }
-
-  const browserPromise = launchers[engine](headless);
-  browserCache.set(cacheKey, browserPromise);
-  return browserPromise;
+/**
+ * Closes a browser against a hard deadline — if `close()` doesn't resolve
+ * in time, this returns anyway rather than blocking the test indefinitely
+ * (Playwright's public `Browser` API has no way to force-kill the
+ * underlying OS process directly, so a still-wedged process may linger; the
+ * point here is only to stop *our own* await chain from hanging on it).
+ *
+ * Confirmed live: a run that shared one long-lived browser instance across
+ * all 200 devices (via a per-engine cache) hit a WebKit hang mid-flow on
+ * device #35 — the test's own 8-minute timeout eventually fired, but the
+ * *shared* `browser.close()` in a describe-level `afterAll` hook then hung
+ * for another 60s against the same wedged process, and that second
+ * (hook-level) timeout is what made Playwright abandon the remaining 165
+ * devices entirely rather than just marking one device failed and moving
+ * on. Launching a fresh browser per device (no cache, no shared afterAll —
+ * see below) is the real fix, containing a hang to the one device that
+ * caused it; this timeout is the second layer, for a dedicated per-device
+ * browser whose own close() still hangs.
+ */
+async function closeBrowserSafely(browser: Browser, timeoutMs = 15_000): Promise<void> {
+  await Promise.race([browser.close(), new Promise((resolve) => setTimeout(resolve, timeoutMs))]).catch(() => undefined);
 }
-
-test.afterAll(async () => {
-  await Promise.all(
-    [...browserCache.values()].map(async (browserPromise) => {
-      const browser = await browserPromise.catch(() => undefined);
-      await browser?.close().catch(() => undefined);
-    })
-  );
-});
 
 async function captureStep(page: Page, dir: string, counter: { n: number }, name: string) {
   counter.n += 1;
@@ -146,7 +140,10 @@ test.describe('Place order across every device', () => {
       };
 
       let currentStep = 'Launch browser context';
-      const browser = await getBrowser(deviceCase.browserType, headless);
+      // A fresh browser per device, not a shared/reused instance — see
+      // closeBrowserSafely's comment for why a shared browser across all 200
+      // devices previously let one device's hang take the whole run down.
+      const browser = await launchers[deviceCase.browserType](headless);
       const context = await browser.newContext({
         ...deviceCase.deviceDescriptor,
         baseURL: BASE_URL,
@@ -223,7 +220,10 @@ test.describe('Place order across every device', () => {
       } finally {
         result.durationMs = Date.now() - startedAt;
         writeResult(deviceCase.id, result);
-        await context.close().catch(() => undefined);
+        // Closing the browser closes every context/page it owns — no need
+        // to separately close `context` first, and one fewer blocking call
+        // that could itself hang against an already-wedged browser process.
+        await closeBrowserSafely(browser);
       }
 
       console.log(
