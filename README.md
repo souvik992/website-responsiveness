@@ -42,8 +42,8 @@ Every `desktop-*` and mobile project runs the same `tests/e2e` spec, which place
 
 ## Running on GitHub Actions
 
-- `.github/workflows/device-order-matrix.yml` — manual-only, shards the 200-device matrix suite.
-- `.github/workflows/desktop-e2e.yml` — manual-only (`workflow_dispatch`), matrix job over all 16 `desktop-*` projects above. Each is a separate job, so from the Actions tab you can re-run just one browser/resolution (e.g. only `desktop-webkit-1366x768`) via **Re-run jobs → Re-run failed jobs** or by selecting that specific job, instead of re-running the whole matrix. A `merge-report` job then combines every leg's result into one `desktop-order-report.xlsx` artifact, same structure as the device-matrix's report.
+- **Mobile Devices Matrix** (`.github/workflows/device-order-matrix.yml`) — manual-only, shards the 200-device matrix suite.
+- **Desktop and Browser Matrix** (`.github/workflows/desktop-e2e.yml`) — manual-only (`workflow_dispatch`), matrix job over all 16 `desktop-*` projects above. Each is a separate job, so from the Actions tab you can re-run just one browser/resolution (e.g. only `desktop-webkit-1366x768`) via **Re-run jobs → Re-run failed jobs** or by selecting that specific job, instead of re-running the whole matrix. A `merge-report` job then combines every leg's result into one `desktop-order-report.xlsx` artifact, same structure as the device-matrix's report.
 
 ## Reports
 

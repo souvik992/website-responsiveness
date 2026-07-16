@@ -1,4 +1,4 @@
-name: Place Order — Device Matrix
+name: Mobile Devices Matrix
 
 # Manual trigger only — this places 200 real orders through the Razorpay
 # sandbox (one per device) and hits the shared staging backend hundreds of

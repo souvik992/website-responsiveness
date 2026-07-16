@@ -1,4 +1,4 @@
-name: Place Order — Desktop Browsers
+name: Desktop and Browser Matrix
 
 # Manual trigger only — like the device matrix workflow, this places a real
 # order through the Razorpay sandbox for every desktop project that runs, so
