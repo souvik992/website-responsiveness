@@ -198,6 +198,7 @@ export class PlaceOrderPage {
       // the click itself landed — so a timeout here is not fatal on its own;
       // handleProductCustomizerIfPresent() below confirms what actually happened.
       await button.click().catch(() => undefined);
+      await this.handleOrderTypeModalIfPresent();
       await this.handleProductCustomizerIfPresent();
 
       const newCartCount = await this.pollUntilCartCountChanges(cartCount);
@@ -306,6 +307,28 @@ export class PlaceOrderPage {
    * The first variant (and any required "extra dip"-style option) already
    * comes pre-selected, so no explicit option picking is needed here.
    */
+  /**
+   * The very first "Add" click of a session can surface a "How do you want
+   * your order?" Delivery/Takeaway chooser that sits on top of the catalog —
+   * confirmed live via a failed run's screenshot, where the click landed on
+   * this overlay instead of the product's "Add" button, so the cart count
+   * never changed. This suite always flows through delivery afterwards
+   * (ensureDeliveryAddressAttached, etc.), so "Delivery" is the only answer
+   * that keeps the rest of the journey consistent.
+   */
+  private async handleOrderTypeModalIfPresent() {
+    const modalHeading = this.page.getByText(/how do you want your order/i).first();
+    if (!(await this.waitVisible(modalHeading, 1_500))) {
+      return; // not shown this time
+    }
+
+    const deliveryOption = this.page.getByRole('button', { name: /delivery.*to your door/i }).first();
+    if (await this.waitVisible(deliveryOption, 2_000)) {
+      await deliveryOption.click();
+    }
+    await modalHeading.waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => undefined);
+  }
+
   private async handleProductCustomizerIfPresent() {
     // The button's accessible name includes the price (e.g. "Add Item ₹629"),
     // so this matches on the leading label rather than the whole name.
