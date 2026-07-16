@@ -116,6 +116,13 @@ export class PlaceOrderPage {
         .first();
       if (await this.waitVisible(addressOpener, 5_000)) {
         await addressOpener.click().catch(() => undefined);
+        // Confirmed live: clicking the header's address/delivery chip is what
+        // actually triggers the "How do you want your order?" onboarding
+        // chain (not the "Add" click it was first found blocking) — dismiss
+        // it here, where it's actually caused, rather than only opportunistically
+        // later. Left unhandled, it sits on top of the location picker and
+        // "Enter your Location Manually" never becomes visible below.
+        await this.handleOrderTypeModalIfPresent();
       }
     }
 
@@ -168,14 +175,8 @@ export class PlaceOrderPage {
   // Product catalog & cart
   // ─────────────────────────────────────────────────────────────────────
 
-  /**
-   * Adds `count` distinct products from the catalog to the cart, verifying
-   * each add via the cart badge — unless `ignoreCartCountCheck` is set, in
-   * which case a stagnant badge is logged instead of failing the run (used
-   * on desktop projects, where the badge read has proven less reliable).
-   */
-  async selectRandomProducts(count = 2, options: { ignoreCartCountCheck?: boolean } = {}): Promise<SelectedProduct[]> {
-    const { ignoreCartCountCheck = false } = options;
+  /** Adds `count` distinct products from the catalog to the cart, verifying each add via the cart badge. */
+  async selectRandomProducts(count = 2): Promise<SelectedProduct[]> {
     await this.waitForCatalogToLoad();
 
     const selections: SelectedProduct[] = [];
@@ -204,15 +205,19 @@ export class PlaceOrderPage {
       // the click itself landed — so a timeout here is not fatal on its own;
       // handleProductCustomizerIfPresent() below confirms what actually happened.
       await button.click().catch(() => undefined);
-      await this.handleOrderTypeModalIfPresent();
+      const wentThroughOnboarding = await this.handleOrderTypeModalIfPresent();
+      if (wentThroughOnboarding) {
+        // Confirmed live: the first "Add" click on a fresh session is consumed
+        // entirely by the order-type/delivery-address onboarding above — it
+        // does not also add the item once onboarding finishes, so the same
+        // button needs a second, now-unobstructed click.
+        await button.click().catch(() => undefined);
+      }
       await this.handleProductCustomizerIfPresent();
 
       const newCartCount = await this.pollUntilCartCountChanges(cartCount);
       if (newCartCount <= cartCount) {
-        if (!ignoreCartCountCheck) {
-          throw new Error(`Adding "${productName}" to the cart did not increase the cart count.`);
-        }
-        console.log(`[cart] Adding "${productName}" didn't visibly increase the cart count — ignoring and continuing.`);
+        throw new Error(`Adding "${productName}" to the cart did not increase the cart count.`);
       }
       cartCount = newCartCount;
 
@@ -317,25 +322,53 @@ export class PlaceOrderPage {
    * comes pre-selected, so no explicit option picking is needed here.
    */
   /**
-   * The very first "Add" click of a session can surface a "How do you want
-   * your order?" Delivery/Takeaway chooser that sits on top of the catalog —
-   * confirmed live via a failed run's screenshot, where the click landed on
-   * this overlay instead of the product's "Add" button, so the cart count
-   * never changed. This suite always flows through delivery afterwards
-   * (ensureDeliveryAddressAttached, etc.), so "Delivery" is the only answer
-   * that keeps the rest of the journey consistent.
+   * Clicking the header's address/delivery chip (in `setDeliveryLocationViaSearch`)
+   * is what actually triggers a "How do you want your order?" Delivery/Takeaway
+   * chooser, chained straight into a "Set delivery address" step and then a
+   * map-based "Confirm & Continue" screen — confirmed live, even though the
+   * header already shows a resolved address. It was first found blocking the
+   * very first "Add" click of a fresh session (that click doesn't add the
+   * tapped item once this onboarding finishes; it's just what happened to
+   * trigger it that time), so this is also called opportunistically there as
+   * a fallback. Returns whether any of it was shown, so callers that rely on
+   * a click actually registering know to repeat it.
    */
-  private async handleOrderTypeModalIfPresent() {
+  private async handleOrderTypeModalIfPresent(): Promise<boolean> {
+    let handledSomething = false;
+
     const modalHeading = this.page.getByText(/how do you want your order/i).first();
-    if (!(await this.waitVisible(modalHeading, 1_500))) {
-      return; // not shown this time
+    if (await this.waitVisible(modalHeading, 1_500)) {
+      handledSomething = true;
+      const deliveryOption = this.page.getByRole('button', { name: /delivery.*to your door/i }).first();
+      if (await this.waitVisible(deliveryOption, 2_000)) {
+        await deliveryOption.click();
+      }
+      await modalHeading.waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => undefined);
     }
 
-    const deliveryOption = this.page.getByRole('button', { name: /delivery.*to your door/i }).first();
-    if (await this.waitVisible(deliveryOption, 2_000)) {
-      await deliveryOption.click();
+    // Choosing "Delivery" above can chain straight into this second step even
+    // though the header already shows a resolved address. Left unhandled, it
+    // sits on top of the catalog the same way the first modal did.
+    const addressHeading = this.page.getByText(/set delivery address/i).first();
+    if (await this.waitVisible(addressHeading, 2_000)) {
+      handledSomething = true;
+      const useCurrentLocation = this.page.getByText(/use current location/i).first();
+      if (await this.waitVisible(useCurrentLocation, 2_000)) {
+        await useCurrentLocation.click();
+      }
+      await addressHeading.waitFor({ state: 'hidden', timeout: 10_000 }).catch(() => undefined);
+
+      // "Use current location" resolves GPS to a pinned address on a map and
+      // lands on a further "Confirm & Continue" screen — confirmed live, a
+      // fully separate step from the "Set delivery address" one above.
+      const confirmButton = this.page.getByRole('button', { name: /confirm\s*&?\s*continue/i }).first();
+      if (await this.waitVisible(confirmButton, 10_000)) {
+        await confirmButton.click();
+        await confirmButton.waitFor({ state: 'hidden', timeout: 10_000 }).catch(() => undefined);
+      }
     }
-    await modalHeading.waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => undefined);
+
+    return handledSomething;
   }
 
   private async handleProductCustomizerIfPresent() {
@@ -1032,15 +1065,16 @@ export class PlaceOrderPage {
         // an instant check here can miss it and skip the click-through
         // entirely on the first attempt.
         //
-        // Match the visible <h3> heading by role, not bare text: confirmed
-        // from a failed run's trace ("locator resolved to hidden <span
-        // data-testid=\"title\">Payment Options</span>") that this checkout
-        // build also renders the same title as a hidden span earlier in the
-        // DOM, so a text locator's .first() picks the hidden copy and this
-        // visibility wait then times out forever on a screen that is
-        // actually showing.
+        // Confirmed live (via a frame body-text dump on a run that otherwise
+        // timed out here): this checkout build no longer marks the "Payment
+        // Options" title with an ARIA heading role at all, so a `getByRole`
+        // heading match silently never fires even while "Payment Options /
+        // UPI / Cards / EMI / Netbanking / ..." is genuinely showing —
+        // filtering a plain text match down to visible elements is what
+        // actually holds up across builds (the same pattern already used for
+        // the UPI/PhonePe row below, for the same "hidden duplicate" reason).
         const stillSelectingPaymentMethod = await this.waitVisible(
-          paymentFrame.getByRole('heading', { name: 'Payment Options' }).first(),
+          paymentFrame.getByText('Payment Options', { exact: true }).filter({ visible: true }).first(),
           10_000
         );
         if (stillSelectingPaymentMethod) {
@@ -1142,26 +1176,63 @@ export class PlaceOrderPage {
       return;
     }
 
-    // Fall back to another recommended app, or the generic UPI QR flow, only
-    // if PhonePe itself isn't offered.
-    const recommendedApp = paymentFrame.getByText(/^UPI - (Google Pay|CRED UPI)$/i).filter({ visible: true }).first();
-    if (await this.waitVisible(recommendedApp, 5_000)) {
-      await recommendedApp.click();
-    } else {
-      const upiOption = paymentFrame.getByText(/^upi$/i).filter({ visible: true }).first();
-      if (await this.waitVisible(upiOption, 5_000)) {
-        await upiOption.click();
-      }
+    // PhonePe isn't always offered — Razorpay can instead render a QR-only
+    // UPI view (a scannable code plus non-actionable app icons, no clickable
+    // "recommended app" row) with no automatable success path at all.
+    // Netbanking → Bank of Baroda is a stable fallback present in every
+    // checkout variant, ending in the sandbox's own simulated bank page.
+    await this.completeNetbankingFallback(paymentFrame);
+  }
+
+  /** Falls back to Netbanking → Bank of Baroda when no UPI recommended-app row is offered, then clicks the sandbox's simulated bank "Success" button. */
+  private async completeNetbankingFallback(paymentFrame: FrameLocator) {
+    const netbanking = paymentFrame.getByText(/^netbanking$/i).filter({ visible: true }).first();
+    if (await this.waitVisible(netbanking, 5_000)) {
+      // Confirmed live: a plain click here misses — a decorative background
+      // SVG and an overlay-backdrop div both intercept pointer events right
+      // where this category label renders, the same kind of overlay
+      // interference `force: true` already works around elsewhere in this
+      // file (see setDeliveryLocationViaSearch's suggestion click).
+      await netbanking.click({ force: true });
     }
 
-    const proceedButton = paymentFrame.getByRole('button', { name: /continue|proceed|pay/i }).first();
+    const bankOfBaroda = paymentFrame.getByText(/bank of baroda/i).filter({ visible: true }).first();
+    if (!(await this.waitVisible(bankOfBaroda, 8_000))) {
+      return;
+    }
+
+    // Confirmed live via screenshot: selecting the bank opens Razorpay's
+    // simulated bank-auth page ("Welcome to Razorpay Software Private Ltd
+    // Bank" with Success/Failure buttons) in a brand-new browser window/tab —
+    // not inside this iframe and not on the top-level page — so the popup
+    // has to be captured at the same time as the click that triggers it.
+    const [popup] = await Promise.all([
+      this.page.context().waitForEvent('page', { timeout: 20_000 }).catch(() => null),
+      bankOfBaroda.click({ force: true }),
+    ]);
+
+    if (popup) {
+      await popup.waitForLoadState('domcontentloaded').catch(() => undefined);
+      const successButton = popup.getByRole('button', { name: /success/i }).first();
+      if (await this.waitVisible(successButton, 15_000)) {
+        await successButton.click();
+      }
+      return;
+    }
+
+    // No popup appeared — fall back to the possibility that this deployment
+    // instead renders the bank confirmation in-frame or on the top-level page.
+    const proceedButton = paymentFrame.getByRole('button', { name: /pay|continue|proceed/i }).first();
     if (await this.waitVisible(proceedButton, 5_000)) {
       await proceedButton.click();
     }
 
-    const finalButton = paymentFrame.getByRole('button', { name: /success|authorize|done/i }).first();
-    if (await this.waitVisible(finalButton, 8_000)) {
-      await finalButton.click();
+    const successInFrame = paymentFrame.getByRole('button', { name: /success/i }).first();
+    const successOnPage = this.page.getByRole('button', { name: /success/i }).first();
+    if (await this.waitVisible(successInFrame, 15_000)) {
+      await successInFrame.click();
+    } else if (await this.waitVisible(successOnPage, 15_000)) {
+      await successOnPage.click();
     }
   }
 

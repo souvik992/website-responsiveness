@@ -24,7 +24,7 @@ test.describe('Place order flow', () => {
   // needs more headroom than the rest of the flow alone would.
   test.setTimeout(7 * 60_000);
 
-  test('places an online order end to end', async ({ page, apiCalls, errorLog, uiAlerts }, testInfo) => {
+  test('places an online order end to end', async ({ page, apiCalls, errorLog, uiAlerts }) => {
     const placeOrderPage = new PlaceOrderPage(page);
 
     await test.step('Open the site and wait for the homepage to render', async () => {
@@ -33,10 +33,7 @@ test.describe('Place order flow', () => {
     });
 
     const selectedProducts = await test.step('Add 2 random products to the cart', async () => {
-      // The cart-badge check has proven less reliable on desktop projects —
-      // ignore a stagnant badge there rather than failing the whole run.
-      const ignoreCartCountCheck = testInfo.project.name.startsWith('desktop');
-      return placeOrderPage.selectRandomProducts(2, { ignoreCartCountCheck });
+      return placeOrderPage.selectRandomProducts(2);
     });
 
     await test.step('Open the cart', async () => {
