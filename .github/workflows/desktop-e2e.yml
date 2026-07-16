@@ -62,3 +62,54 @@ jobs:
           path: playwright-report/
           retention-days: 14
           if-no-files-found: warn
+
+      # place-order.spec.ts writes the same per-run JSON result + step
+      # screenshots the device-matrix suite does (see utils/deviceOrders/*),
+      # so this leg's own result needs uploading here the same way that
+      # suite's shards do — otherwise only the device-matrix's mobile runs
+      # end up with a downloadable report/screenshots artifact and this
+      # desktop leg doesn't.
+      - name: Upload order result (screenshots + JSON) for ${{ matrix.project }}
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-order-results-${{ matrix.project }}
+          path: test-results/device-orders/
+          retention-days: 14
+          if-no-files-found: warn
+
+  merge-report:
+    needs: desktop
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Download every project's order result
+        uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-order-results-*
+          path: merged-results
+
+      # Reuses the exact same merge script the device-matrix workflow uses
+      # (see .github/workflows/device-order-matrix.yml) — it already walks
+      # every subdirectory it's given rather than hardcoding shard names, so
+      # this desktop-project matrix works with it unchanged.
+      - name: Merge every project's result into one Excel report
+        run: npx tsx scripts/merge-device-order-results.ts merged-results test-results/desktop-order-report.xlsx
+
+      - name: Upload merged report + all screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-order-report
+          path: |
+            test-results/desktop-order-report.xlsx
+            merged-results/*/screenshots/**
+          retention-days: 30
