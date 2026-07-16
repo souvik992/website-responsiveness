@@ -26,9 +26,18 @@ jobs:
           - desktop-firefox
           - desktop-webkit
           - desktop-edge
-          - desktop-1920x1080
-          - desktop-1366x768
-          - desktop-1440x900
+          - desktop-chrome-1920x1080
+          - desktop-chrome-1366x768
+          - desktop-chrome-1440x900
+          - desktop-firefox-1920x1080
+          - desktop-firefox-1366x768
+          - desktop-firefox-1440x900
+          - desktop-webkit-1920x1080
+          - desktop-webkit-1366x768
+          - desktop-webkit-1440x900
+          - desktop-edge-1920x1080
+          - desktop-edge-1366x768
+          - desktop-edge-1440x900
     env:
       BASE_URL: ${{ github.event.inputs.base_url }}
     steps:
@@ -42,13 +51,15 @@ jobs:
       - run: npm ci
 
       # Only install the browser binary this matrix leg actually needs.
+      # Matched by prefix (not exact name) since a resolution leg's project
+      # name is desktop-<engine>-<resolution>, e.g. desktop-firefox-1920x1080.
       - name: Install browser for ${{ matrix.project }}
         run: |
           case "${{ matrix.project }}" in
-            desktop-firefox) npx playwright install --with-deps firefox ;;
-            desktop-webkit)  npx playwright install --with-deps webkit ;;
-            desktop-edge)    npx playwright install --with-deps msedge ;;
-            *)               npx playwright install --with-deps chromium ;;
+            desktop-firefox*) npx playwright install --with-deps firefox ;;
+            desktop-webkit*)  npx playwright install --with-deps webkit ;;
+            desktop-edge*)    npx playwright install --with-deps msedge ;;
+            *)                npx playwright install --with-deps chromium ;;
           esac
 
       - name: Run tests/e2e on ${{ matrix.project }}

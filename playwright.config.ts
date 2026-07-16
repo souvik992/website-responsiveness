@@ -1,4 +1,4 @@
-import { defineConfig, devices } from '@playwright/test';
+import { defineConfig, devices, type PlaywrightTestConfig } from '@playwright/test';
 
 /**
  * Environment-driven base URL.
@@ -6,6 +6,52 @@ import { defineConfig, devices } from '@playwright/test';
  * Defaults to the Replit demo template if not set.
  */
 const BASE_URL = process.env.BASE_URL || 'https://restaurant-website-delivery-takeaway-default-template.replit.app';
+
+type ProjectConfig = NonNullable<PlaywrightTestConfig['projects']>[number];
+
+const DESKTOP_ENGINES: { name: string; device: string; channel?: string }[] = [
+  { name: 'chrome', device: 'Desktop Chrome' },
+  { name: 'firefox', device: 'Desktop Firefox' },
+  { name: 'webkit', device: 'Desktop Safari' },
+  // Real Microsoft Edge (not just Chrome with an Edge UA) — needs the
+  // `msedge` channel installed via `playwright install msedge`.
+  { name: 'edge', device: 'Desktop Edge', channel: 'msedge' },
+];
+
+const DESKTOP_RESOLUTIONS: { label: string; viewport: { width: number; height: number } }[] = [
+  // Full HD — the most common external-monitor / laptop-docked resolution.
+  { label: '1920x1080', viewport: { width: 1920, height: 1080 } },
+  // Most common laptop panel resolution.
+  { label: '1366x768', viewport: { width: 1366, height: 768 } },
+  // Common 15"-16" laptop resolution, distinct aspect ratio from the above two.
+  { label: '1440x900', viewport: { width: 1440, height: 900 } },
+];
+
+/**
+ * One project per browser at its default (1280x720) viewport, plus one per
+ * browser × resolution combination — a real cross-product, not just
+ * resolution variants of Chrome, so a layout bug specific to e.g. Firefox at
+ * 1366x768 isn't invisible to this suite.
+ */
+function buildDesktopProjects(): ProjectConfig[] {
+  const projects: ProjectConfig[] = DESKTOP_ENGINES.map(({ name, device, channel }) => ({
+    name: `desktop-${name}`,
+    testIgnore: /place-order-device-matrix\.spec\.ts/,
+    use: { ...devices[device], ...(channel ? { channel } : {}) },
+  }));
+
+  for (const { name, device, channel } of DESKTOP_ENGINES) {
+    for (const { label, viewport } of DESKTOP_RESOLUTIONS) {
+      projects.push({
+        name: `desktop-${name}-${label}`,
+        testIgnore: /place-order-device-matrix\.spec\.ts/,
+        use: { ...devices[device], ...(channel ? { channel } : {}), viewport },
+      });
+    }
+  }
+
+  return projects;
+}
 
 export default defineConfig({
   testDir: './tests',
@@ -52,46 +98,7 @@ export default defineConfig({
       testIgnore: /place-order-device-matrix\.spec\.ts/,
       use: { ...devices['iPhone XR'] },
     },
-    {
-      name: 'desktop-chrome',
-      testIgnore: /place-order-device-matrix\.spec\.ts/,
-      use: { ...devices['Desktop Chrome'] },
-    },
-    {
-      name: 'desktop-firefox',
-      testIgnore: /place-order-device-matrix\.spec\.ts/,
-      use: { ...devices['Desktop Firefox'] },
-    },
-    {
-      name: 'desktop-webkit',
-      testIgnore: /place-order-device-matrix\.spec\.ts/,
-      use: { ...devices['Desktop Safari'] },
-    },
-    {
-      // Real Microsoft Edge (not just Chrome with an Edge UA) — needs the
-      // `msedge` channel installed via `playwright install msedge`.
-      name: 'desktop-edge',
-      testIgnore: /place-order-device-matrix\.spec\.ts/,
-      use: { ...devices['Desktop Edge'], channel: 'msedge' },
-    },
-    {
-      // Full HD — the most common external-monitor / laptop-docked resolution.
-      name: 'desktop-1920x1080',
-      testIgnore: /place-order-device-matrix\.spec\.ts/,
-      use: { ...devices['Desktop Chrome'], viewport: { width: 1920, height: 1080 } },
-    },
-    {
-      // Most common laptop panel resolution.
-      name: 'desktop-1366x768',
-      testIgnore: /place-order-device-matrix\.spec\.ts/,
-      use: { ...devices['Desktop Chrome'], viewport: { width: 1366, height: 768 } },
-    },
-    {
-      // Common 15"-16" laptop resolution, distinct aspect ratio from the above two.
-      name: 'desktop-1440x900',
-      testIgnore: /place-order-device-matrix\.spec\.ts/,
-      use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } },
-    },
+    ...buildDesktopProjects(),
     {
       // The device-matrix suite manages its own browsers/contexts per
       // device case (see tests/place-order-device-matrix.spec.ts), so it

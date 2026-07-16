@@ -3,6 +3,7 @@ import type { Page } from '@playwright/test';
 import { test } from '../../fixtures/errorMonitor';
 import { PlaceOrderPage } from '../../pages/PlaceOrderPage';
 import { isBenignHardError } from '../../utils/orderFlowAssertions';
+import { attachConsoleErrorCollector, runResponsiveChecks } from '../../utils/deviceChecks';
 import { writeResult, screenshotDirFor } from '../../utils/deviceOrders/resultsStore';
 import { DeviceOrderResult } from '../../utils/deviceOrders/types';
 
@@ -68,6 +69,10 @@ test.describe('Place order flow', () => {
       screenshotDir,
     };
 
+    // Must be attached before navigation — console/pageerror events fire
+    // during page load, before runResponsiveChecks below gets a chance to look.
+    const consoleErrors = attachConsoleErrorCollector(page);
+
     let currentStep = 'Open the site and wait for the homepage to render';
     try {
       await placeOrderPage.goto();
@@ -77,6 +82,13 @@ test.describe('Place order flow', () => {
       currentStep = 'Add 1 random product to the cart';
       const selectedProducts = await placeOrderPage.selectRandomProducts(1);
       await captureStep(page, screenshotDir, stepCounter, 'product-added');
+
+      // Device-compatibility signal (same checks tests/place-order-device-matrix.spec.ts
+      // uses) taken once the real catalog has rendered, not the loading state.
+      const checks = await runResponsiveChecks(page, consoleErrors);
+      result.compatibilityStatus = checks.status;
+      result.compatibilityIssueType = checks.issueType;
+      result.compatibilityIssueDescription = checks.issueDescription;
 
       currentStep = 'Open the cart';
       await placeOrderPage.openCart();
@@ -113,7 +125,8 @@ test.describe('Place order flow', () => {
       );
 
       // An order that placed fine but logged real console/UI errors along
-      // the way still deserves a WARNING, not a silent PASS.
+      // the way still deserves a WARNING, not a silent PASS — but not if
+      // runResponsiveChecks above already found something worse (FAIL).
       const failedApiCalls = apiCalls.filter((call) => call.status >= 400);
       const errorAlerts = uiAlerts.filter((alert) => alert.looksLikeError);
       const hardUiErrors = errorLog.filter((entry) => entry.severity === 'hard' && !isBenignHardError(entry));
@@ -122,7 +135,7 @@ test.describe('Place order flow', () => {
           `${uiAlerts.length} snackbar(s) observed, ${errorAlerts.length} looked like errors; ` +
           `${hardUiErrors.length} hard UI/console error(s).`
       );
-      if (hardUiErrors.length > 0) {
+      if (hardUiErrors.length > 0 && result.compatibilityStatus === 'PASS') {
         result.compatibilityStatus = 'WARNING';
         result.compatibilityIssueType = 'Console Error';
         result.compatibilityIssueDescription = hardUiErrors
