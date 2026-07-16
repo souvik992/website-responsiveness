@@ -146,6 +146,16 @@ test.describe('Place order flow', () => {
     } catch (err) {
       result.failedStep = currentStep;
       result.orderError = err instanceof Error ? err.message : String(err);
+      // A failure before runResponsiveChecks ran (e.g. the site never loaded)
+      // would otherwise leave the Summary sheet's Compatibility Issue
+      // Description column at its default '-', hiding the real error from
+      // anyone scanning that column alone. Only fills in if nothing worse
+      // (an actual layout/console issue) was already found.
+      if (result.compatibilityStatus === 'PASS') {
+        result.compatibilityStatus = 'FAIL';
+        result.compatibilityIssueType = 'Order Error';
+        result.compatibilityIssueDescription = `Failed at "${currentStep}": ${result.orderError}`;
+      }
       await captureStep(page, screenshotDir, stepCounter, 'failure');
       console.error(`[order] FAILED at "${currentStep}": ${result.orderError}`);
     } finally {

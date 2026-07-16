@@ -65,6 +65,11 @@ jobs:
     needs: place-orders
     if: always()
     runs-on: ubuntu-latest
+    # Needed to delete the intermediate per-shard artifacts below, so only
+    # the one merged artifact this job produces is left once the workflow
+    # finishes.
+    permissions:
+      actions: write
     steps:
       - uses: actions/checkout@v4
 
@@ -89,11 +94,35 @@ jobs:
       - name: Merge shard results into one Excel report
         run: npx tsx scripts/merge-device-order-results.ts merged-results test-results/device-order-report.xlsx
 
+      # Shard directories only exist to hand results off between jobs — the
+      # final artifact should read as one flat report plus one folder per
+      # device, not nested under each shard's own artifact name. Device ids
+      # are unique across every shard, so this can never collide.
+      - name: Flatten every shard's screenshots into one folder per device
+        run: |
+          mkdir -p final-report/screenshots
+          cp test-results/device-order-report.xlsx final-report/
+          shopt -s nullglob
+          for device_dir in merged-results/*/screenshots/*/; do
+            cp -r "$device_dir" "final-report/screenshots/$(basename "$device_dir")"
+          done
+
       - name: Upload merged report + all screenshots
         uses: actions/upload-artifact@v4
         with:
           name: device-order-report
-          path: |
-            test-results/device-order-report.xlsx
-            merged-results/*/screenshots/**
+          path: final-report/
           retention-days: 30
+
+      # Only the merged artifact above should remain once this workflow
+      # finishes — the per-shard artifacts were only ever an intermediate
+      # hand-off into this job.
+      - name: Delete intermediate per-shard artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" --paginate \
+            -q '.artifacts[] | select(.name | startswith("device-order-results-shard-")) | .id' \
+            | while read -r artifact_id; do
+                gh api -X DELETE "repos/${{ github.repository }}/actions/artifacts/$artifact_id"
+              done

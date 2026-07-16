@@ -42,13 +42,14 @@ Every `desktop-*` and mobile project runs the same `tests/e2e` spec, which place
 
 ## Running on GitHub Actions
 
-- **Mobile Devices Matrix** (`.github/workflows/device-order-matrix.yml`) — manual-only, shards the 200-device matrix suite.
-- **Desktop and Browser Matrix** (`.github/workflows/desktop-e2e.yml`) — manual-only (`workflow_dispatch`), matrix job over all 16 `desktop-*` projects above. Each is a separate job, so from the Actions tab you can re-run just one browser/resolution (e.g. only `desktop-webkit-1366x768`) via **Re-run jobs → Re-run failed jobs** or by selecting that specific job, instead of re-running the whole matrix. A `merge-report` job then combines every leg's result into one `desktop-order-report.xlsx` artifact, same structure as the device-matrix's report.
+- **Mobile Devices Matrix** (`.github/workflows/device-order-matrix.yml`) — manual-only, shards the 200-device matrix suite. Each shard uploads its own intermediate artifact, but a `merge-report` job combines every shard into one `device-order-report` artifact (the xlsx report at its root, one screenshot folder per device) and deletes the per-shard intermediates afterward — only that one artifact remains once the workflow finishes.
+- **Desktop and Browser Matrix** (`.github/workflows/desktop-e2e.yml`) — manual-only (`workflow_dispatch`), matrix job over all 16 `desktop-*` projects above. Each is a separate job, so from the Actions tab you can re-run just one browser/resolution (e.g. only `desktop-webkit-1366x768`) via **Re-run jobs → Re-run failed jobs** or by selecting that specific job, instead of re-running the whole matrix. Same as the mobile workflow, a `merge-report` job combines every leg into one `desktop-order-report` artifact and deletes the per-project intermediates afterward.
 
 ## Reports
 
 - HTML report: `playwright-report/` (`npx playwright show-report`)
-- Device-order / desktop-e2e results: both write into `test-results/device-orders/` (JSON result + step screenshots per run) and are merged with `npm run merge:device-orders`, or automatically into `test-results/device-order-report.xlsx` after any local run via `globalTeardown`.
+- Device-order / desktop-e2e results: both write into `test-results/device-orders/` (JSON result + step screenshots per run) and are merged with `npm run merge:device-orders`, or automatically into `test-results/device-order-report.xlsx` after any local run via `globalTeardown`. On GitHub Actions, both workflows' `merge-report` job produces exactly one downloadable artifact — the xlsx report plus one screenshot folder per device/browser — with every intermediate per-shard/per-project artifact deleted afterward.
+- The Summary sheet's **Compatibility Issue Description** column now also surfaces the actual error (failed step + message) whenever a run fails before any layout check even ran, not just genuine layout/console issues.
 
 ## Structure
 
