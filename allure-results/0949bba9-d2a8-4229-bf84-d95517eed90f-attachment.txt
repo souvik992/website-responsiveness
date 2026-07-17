@@ -1,0 +1,2 @@
+[cart] Added "Roast Chicken" (₹279) — cart now has 1 item(s).
+[cart] Added "Heritage Andhra Subz Biryani" (₹1179) — cart now has 2 item(s).

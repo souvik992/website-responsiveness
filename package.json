@@ -14,11 +14,20 @@
     "test:desktop:edge": "playwright test tests/e2e --project=desktop-edge --project=desktop-edge-1920x1080 --project=desktop-edge-1366x768 --project=desktop-edge-1440x900",
     "test:device-orders": "playwright test tests/place-order-device-matrix.spec.ts --project=device-orders --workers=1",
     "merge:device-orders": "tsx scripts/merge-device-order-results.ts",
+    "test:sanity": "playwright test functional-tests/sanity --project=functional-suite --workers=1",
+    "test:e2e-suite": "playwright test functional-tests/e2e --project=functional-suite --workers=1",
+    "test:api": "playwright test functional-tests/api --project=functional-suite --workers=1",
+    "test:functional:all": "playwright test functional-tests/sanity functional-tests/e2e functional-tests/api --project=functional-suite --workers=1",
+    "report:test-cases": "tsx scripts/generate-test-case-report.ts",
+    "allure:generate": "allure generate allure-results --clean -o allure-report",
+    "allure:open": "allure open allure-report",
     "install:browsers": "playwright install --with-deps chromium firefox webkit msedge"
   },
   "devDependencies": {
     "@playwright/test": "^1.48.0",
     "@types/node": "^22.7.5",
+    "allure-commandline": "^2.43.0",
+    "allure-playwright": "^3.10.2",
     "exceljs": "^4.4.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.3"

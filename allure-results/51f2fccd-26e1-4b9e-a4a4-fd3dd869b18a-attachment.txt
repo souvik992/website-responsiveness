@@ -1,0 +1,17 @@
+[cart] Added "Kolkatta Chicken Biryani" (₹1579) — cart now has 1 item(s).
+[debug] selectSavedAddressIfAvailable: no card matched. url=https://restaurant-website-delivery-takeaway-default-template.replit.app/address-book
+---BODY TEXT---
+1
+
+Delivery Address
+
+Use Current Location
+
+Saved Addresses
+
+Address
+
+
+
+Uh-oh! Your address seems to be missing. Add one!
+---END---

@@ -71,6 +71,8 @@ export default defineConfig({
   reporter: [
     ['list'],
     ['html', { outputFolder: 'playwright-report', open: 'never' }],
+    ['json', { outputFile: 'test-results/results.json' }],
+    ['allure-playwright', { outputFolder: 'allure-results' }],
   ],
 
   use: {
@@ -115,6 +117,29 @@ export default defineConfig({
       // which guarantees a clean slate no in-process fix could.
       retries: 1,
       use: { trace: 'off', video: 'off', screenshot: 'off' },
+    },
+    {
+      // Sanity/E2E/API functional test-case suite (see functional-tests/ and
+      // test-cases/testCaseDefinitions.ts). Deliberately a sibling directory
+      // outside the shared `./tests` testDir, not a testIgnore exclusion on
+      // the projects above — this project's own testDir means the other 18
+      // projects above never see these files, and nothing about their
+      // existing behavior changes.
+      name: 'functional-suite',
+      testDir: './functional-tests',
+      // Confirmed live: even the non-order-placing cases (homepage/catalog/
+      // cart/onboarding) can outlast the global 60s default under real
+      // staging-site load — waitForReady()'s own "not deliverable, retry"
+      // loop alone can take a while. Order-placing cases still set their own
+      // longer test.setTimeout() to match placeOrderAndPay's retry budget.
+      timeout: 3 * 60_000,
+      // Same justification as device-orders above: confirmed live that a
+      // full 17-case run against the shared live staging backend can hit a
+      // one-off transient miss (a random add-to-cart badge lag, a slow
+      // navigation) on a case that passes cleanly on its own — a fresh
+      // worker-process retry filters that out from a genuine regression.
+      retries: 1,
+      use: { ...devices['Desktop Chrome'] },
     },
   ],
 });

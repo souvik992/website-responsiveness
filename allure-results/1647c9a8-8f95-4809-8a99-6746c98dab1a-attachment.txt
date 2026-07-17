@@ -1,0 +1,18 @@
+[cart] Added "Nellore Jackfruit Biryani" (₹2679) — cart now has 1 item(s).
+[cart] Added "Roast Chicken" (₹279) — cart now has 2 item(s).
+[debug] selectSavedAddressIfAvailable: no card matched. url=https://restaurant-website-delivery-takeaway-default-template.replit.app/address-book
+---BODY TEXT---
+2
+
+Delivery Address
+
+Use Current Location
+
+Saved Addresses
+
+Address
+
+
+
+Uh-oh! Your address seems to be missing. Add one!
+---END---

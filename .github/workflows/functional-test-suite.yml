@@ -1,0 +1,88 @@
+name: Functional Test Suite
+
+# Manual trigger only — Sanity/API cases place at least one real order through
+# the Razorpay sandbox, and every End to End case does; picking "all" adds up
+# fast, so this shouldn't fire on every push/PR. Unlike the Mobile Devices
+# Matrix and Desktop and Browser Matrix workflows, these tests fail normally
+# on a real assertion failure — this suite is meant to gate quality, not just
+# gather compatibility signal.
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: 'Which suite to run'
+        type: choice
+        options:
+          - sanity
+          - e2e
+          - api
+          - all
+        default: sanity
+      base_url:
+        description: 'Target site URL'
+        required: false
+        default: 'https://restaurant-website-delivery-takeaway-default-template.replit.app'
+
+jobs:
+  run-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      BASE_URL: ${{ github.event.inputs.base_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - run: npx playwright install --with-deps chromium
+
+      # "all" is one invocation covering all three directories, not three
+      # separate `playwright test` runs — each run overwrites the JSON
+      # reporter's single output file, so three separate invocations would
+      # leave the report generator only ever seeing the last suite's results.
+      - name: Determine test directories for "${{ inputs.suite }}"
+        id: dirs
+        run: |
+          case "${{ inputs.suite }}" in
+            sanity) echo "dirs=functional-tests/sanity" >> "$GITHUB_OUTPUT" ;;
+            e2e)    echo "dirs=functional-tests/e2e" >> "$GITHUB_OUTPUT" ;;
+            api)    echo "dirs=functional-tests/api" >> "$GITHUB_OUTPUT" ;;
+            all)    echo "dirs=functional-tests/sanity functional-tests/e2e functional-tests/api" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      # No `continue-on-error` here and no `--reporter` override (that would
+      # silently disable the json/allure-playwright reporters configured in
+      # playwright.config.ts — confirmed live while building this suite) —
+      # a real assertion failure should redden this job. Subsequent steps
+      # use `if: always()` so the report still gets built either way.
+      - name: Run ${{ inputs.suite }} suite
+        run: npx playwright test ${{ steps.dirs.outputs.dirs }} --project=functional-suite --workers=1
+
+      - name: Generate test-case tracker (xlsx)
+        if: always()
+        run: npm run report:test-cases
+
+      - name: Generate Allure HTML report
+        if: always()
+        run: npm run allure:generate
+
+      - name: Assemble single report artifact
+        if: always()
+        run: |
+          mkdir -p final-report
+          cp test-results/test-case-report.xlsx final-report/ 2>/dev/null || true
+          cp -r allure-report final-report/allure-report 2>/dev/null || true
+
+      - name: Upload combined report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: functional-test-report
+          path: final-report/
+          retention-days: 30
+          if-no-files-found: warn
