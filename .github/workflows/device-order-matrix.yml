@@ -1,8 +1,8 @@
 name: Mobile Devices Matrix
 
-# Manual trigger only — this places 200 real orders through the Razorpay
-# sandbox (one per device) and hits the shared staging backend hundreds of
-# times, so it should never run on every push/PR.
+# Manual trigger only — even a filtered run places at least one real order
+# through the Razorpay sandbox per device, so it should never run on every
+# push/PR. By default (both inputs blank) this places all 200.
 on:
   workflow_dispatch:
     inputs:
@@ -10,21 +10,59 @@ on:
         description: 'Target site URL'
         required: false
         default: 'https://restaurant-website-delivery-takeaway-default-template.replit.app'
+      devices:
+        description: 'Comma-separated exact device names to run (blank = all ~200). Run `npx tsx scripts/select-device-matrix.ts --list` locally to see valid names.'
+        required: false
+        default: ''
+      order_count:
+        description: 'Max number of devices/orders to run (blank = no limit). Applied after the devices filter, if any — e.g. devices blank + order_count=10 runs the first 10 of the full matrix.'
+        required: false
+        default: ''
 
 jobs:
+  select-devices:
+    runs-on: ubuntu-latest
+    outputs:
+      total: ${{ steps.select.outputs.total }}
+      grep: ${{ steps.select.outputs.grep }}
+      shard_count: ${{ steps.select.outputs.shard_count }}
+      shards_json: ${{ steps.select.outputs.shards_json }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # Builds the exact same ordered device list place-order-device-matrix.spec.ts
+      # does internally (see scripts/select-device-matrix.ts) without touching
+      # that file, and emits a --grep pattern + a right-sized shard count for
+      # whatever subset was requested.
+      - name: Resolve requested devices
+        id: select
+        env:
+          DEVICES: ${{ github.event.inputs.devices }}
+          COUNT: ${{ github.event.inputs.order_count }}
+        run: npx tsx scripts/select-device-matrix.ts
+
   place-orders:
+    needs: select-devices
     runs-on: ubuntu-latest
     # GitHub-hosted runners hard-cap a job at 360 minutes. The full 200-device
     # matrix split across 8 shards (~25 devices each) needs well under that
     # even at the suite's own worst-case ~8 min/device budget (25 × 8 = 200
-    # min); 350 leaves headroom without masking a genuinely stuck job.
+    # min); 350 leaves headroom without masking a genuinely stuck job. Safe
+    # as an upper bound for smaller filtered runs too — they finish faster.
     timeout-minutes: 350
     strategy:
       # One shard failing (e.g. a real device-specific bug) shouldn't cancel
-      # the other 7 — each shard's result is independent data for the report.
+      # the others — each shard's result is independent data for the report.
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: ${{ fromJson(needs.select-devices.outputs.shards_json) }}
     env:
       BASE_URL: ${{ github.event.inputs.base_url }}
     steps:
@@ -46,11 +84,21 @@ jobs:
       # reason; sequential execution *within* this shard's own job instead
       # comes from `--workers=1`, so real OTP/order/payment calls never race
       # each other inside a single job (they still run concurrently *across*
-      # the 8 parallel shard jobs — an accepted tradeoff to fit GitHub's
+      # the parallel shard jobs — an accepted tradeoff to fit GitHub's
       # 360-minute job cap; the local, fully-sequential 200-device run
       # remains the safer option when that race risk isn't acceptable).
-      - name: Run shard ${{ matrix.shard }}/8
-        run: npx playwright test tests/place-order-device-matrix.spec.ts --project=device-orders --workers=1 --shard=${{ matrix.shard }}/8 --reporter=list
+      #
+      # --grep is only non-empty when devices/order_count actually narrowed
+      # the matrix below all 200 (see select-device-matrix.ts) — an unfiltered
+      # run passes no --grep at all, identical to this workflow's prior behavior.
+      - name: Run shard ${{ matrix.shard }}/${{ needs.select-devices.outputs.shard_count }}
+        run: |
+          GREP="${{ needs.select-devices.outputs.grep }}"
+          if [ -n "$GREP" ]; then
+            npx playwright test tests/place-order-device-matrix.spec.ts --project=device-orders --workers=1 --shard=${{ matrix.shard }}/${{ needs.select-devices.outputs.shard_count }} --reporter=list --grep "$GREP"
+          else
+            npx playwright test tests/place-order-device-matrix.spec.ts --project=device-orders --workers=1 --shard=${{ matrix.shard }}/${{ needs.select-devices.outputs.shard_count }} --reporter=list
+          fi
 
       - name: Upload shard results (screenshots + per-device JSON)
         if: always()
