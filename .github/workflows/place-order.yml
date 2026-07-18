@@ -1,0 +1,63 @@
+name: Place Order
+
+# Manual trigger only — this places `order_count` real orders through the
+# Razorpay sandbox back-to-back on a single browser, so it should never run
+# on every push/PR.
+on:
+  workflow_dispatch:
+    inputs:
+      order_count:
+        description: 'How many orders to place, one after another'
+        required: false
+        default: '1'
+      base_url:
+        description: 'Target site URL'
+        required: false
+        default: 'https://restaurant-website-delivery-takeaway-default-template.replit.app'
+
+jobs:
+  place-orders:
+    runs-on: ubuntu-latest
+    # Confirmed live: a single order takes up to ~4.3 min end-to-end (payment
+    # step's own internal retries). GitHub caps a single job at 360 minutes
+    # regardless of what's set here; 350 (same ceiling the other order-placing
+    # workflows use) covers dozens of orders in one run without masking a
+    # genuinely stuck job.
+    timeout-minutes: 350
+    env:
+      BASE_URL: ${{ github.event.inputs.base_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - run: npx playwright install --with-deps chromium
+
+      # --workers=1 keeps repetitions strictly sequential — real OTP/order/
+      # payment calls against the shared staging backend and Razorpay
+      # sandbox must not race each other (same reasoning as the other
+      # order-placing workflows). --repeat-each is Playwright's own "run this
+      # test N times" flag; each repetition gets a fresh browser context
+      # (see repeat-order-tests/place-order-repeat.spec.ts) and its own row
+      # in the Excel report, keyed by attempt number so nothing collides.
+      - name: Place ${{ inputs.order_count }} order(s)
+        run: npx playwright test --project=place-order-repeat --workers=1 --repeat-each=${{ inputs.order_count }} --reporter=list
+
+      # The single-job run's own globalTeardown (utils/deviceOrders/globalTeardown.ts)
+      # already writes the merged xlsx straight to test-results/device-order-report.xlsx
+      # — no separate merge job needed here, unlike the sharded matrix workflows.
+      - name: Upload order report (xlsx + screenshots)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: place-order-report
+          path: |
+            test-results/device-order-report.xlsx
+            test-results/device-orders/screenshots/
+          retention-days: 30
+          if-no-files-found: warn

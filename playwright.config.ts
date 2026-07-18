@@ -141,5 +141,15 @@ export default defineConfig({
       retries: 1,
       use: { ...devices['Desktop Chrome'] },
     },
+    {
+      // Backs the "Place Order" workflow — places N independent real orders
+      // back-to-back on one browser (see repeat-order-tests/), where N comes
+      // from `--repeat-each`. Deliberately a sibling directory outside the
+      // shared `./tests` testDir, same reasoning as functional-suite above:
+      // the other 20 projects never see this file, no testIgnore edits needed.
+      name: 'place-order-repeat',
+      testDir: './repeat-order-tests',
+      use: { ...devices['Desktop Chrome'] },
+    },
   ],
 });
