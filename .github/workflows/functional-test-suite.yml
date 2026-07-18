@@ -1,25 +1,12 @@
 name: Functional Test Suite
 
-# Staged automatic pipeline (plus a manual override for ad-hoc runs):
-#
-#   push (any branch except main)   -> Quick Smoke Tests   (~5 min,  no real order)
-#   pull_request targeting main     -> Critical Regression (~15-20m, 4 real orders: SAN-006, E2E-001, E2E-004, API-004)
-#   push to main (i.e. a merge)     -> Full Regression      (~12-45m, 8 real orders, all 17 cases)
-#   workflow_dispatch               -> pick any suite by hand (sanity/e2e/api/all), same as before
-#
-# Smoke and critical are filtered via --grep against the @ID tags already on
-# every test (see test-cases/testCaseDefinitions.ts) rather than separate
-# spec files, so there's exactly one implementation of each test case.
-#
-# concurrency cancels a superseded run on the same ref — pushing several
-# commits in quick succession shouldn't stack up multiple real-order runs.
+# Manual trigger only — Sanity/API cases place at least one real order through
+# the Razorpay sandbox, and every End to End case does; picking "all" adds up
+# fast, so this shouldn't fire on every push/PR. Unlike the Mobile Devices
+# Matrix and Desktop and Browser Matrix workflows, these tests fail normally
+# on a real assertion failure — this suite is meant to gate quality, not just
+# gather compatibility signal.
 on:
-  push:
-    branches:
-      - '**'
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
     inputs:
       suite:
@@ -36,55 +23,12 @@ on:
         required: false
         default: 'https://restaurant-website-delivery-takeaway-default-template.replit.app'
 
-concurrency:
-  group: functional-test-suite-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  determine-run:
-    runs-on: ubuntu-latest
-    outputs:
-      label: ${{ steps.pick.outputs.label }}
-      dirs: ${{ steps.pick.outputs.dirs }}
-      grep: ${{ steps.pick.outputs.grep }}
-    steps:
-      - id: pick
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            case "${{ inputs.suite }}" in
-              sanity) echo "label=sanity"           >> "$GITHUB_OUTPUT"
-                      echo "dirs=functional-tests/sanity" >> "$GITHUB_OUTPUT"
-                      echo "grep=" >> "$GITHUB_OUTPUT" ;;
-              e2e)    echo "label=e2e"               >> "$GITHUB_OUTPUT"
-                      echo "dirs=functional-tests/e2e" >> "$GITHUB_OUTPUT"
-                      echo "grep=" >> "$GITHUB_OUTPUT" ;;
-              api)    echo "label=api"               >> "$GITHUB_OUTPUT"
-                      echo "dirs=functional-tests/api" >> "$GITHUB_OUTPUT"
-                      echo "grep=" >> "$GITHUB_OUTPUT" ;;
-              all)    echo "label=all"               >> "$GITHUB_OUTPUT"
-                      echo "dirs=functional-tests/sanity functional-tests/e2e functional-tests/api" >> "$GITHUB_OUTPUT"
-                      echo "grep=" >> "$GITHUB_OUTPUT" ;;
-            esac
-          elif [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "label=critical-regression" >> "$GITHUB_OUTPUT"
-            echo "dirs=functional-tests/sanity functional-tests/e2e functional-tests/api" >> "$GITHUB_OUTPUT"
-            echo "grep=@SAN-001|@SAN-002|@SAN-003|@SAN-004|@SAN-005|@SAN-006|@E2E-001|@E2E-004|@API-001|@API-002|@API-003|@API-004" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            echo "label=full-regression" >> "$GITHUB_OUTPUT"
-            echo "dirs=functional-tests/sanity functional-tests/e2e functional-tests/api" >> "$GITHUB_OUTPUT"
-            echo "grep=" >> "$GITHUB_OUTPUT"
-          else
-            echo "label=quick-smoke" >> "$GITHUB_OUTPUT"
-            echo "dirs=functional-tests/sanity" >> "$GITHUB_OUTPUT"
-            echo "grep=@SAN-001|@SAN-002|@SAN-003|@SAN-004|@SAN-005" >> "$GITHUB_OUTPUT"
-          fi
-
   run-tests:
-    needs: determine-run
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
-      BASE_URL: ${{ github.event.inputs.base_url || 'https://restaurant-website-delivery-takeaway-default-template.replit.app' }}
+      BASE_URL: ${{ github.event.inputs.base_url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -97,19 +41,27 @@ jobs:
 
       - run: npx playwright install --with-deps chromium
 
+      # "all" is one invocation covering all three directories, not three
+      # separate `playwright test` runs — each run overwrites the JSON
+      # reporter's single output file, so three separate invocations would
+      # leave the report generator only ever seeing the last suite's results.
+      - name: Determine test directories for "${{ inputs.suite }}"
+        id: dirs
+        run: |
+          case "${{ inputs.suite }}" in
+            sanity) echo "dirs=functional-tests/sanity" >> "$GITHUB_OUTPUT" ;;
+            e2e)    echo "dirs=functional-tests/e2e" >> "$GITHUB_OUTPUT" ;;
+            api)    echo "dirs=functional-tests/api" >> "$GITHUB_OUTPUT" ;;
+            all)    echo "dirs=functional-tests/sanity functional-tests/e2e functional-tests/api" >> "$GITHUB_OUTPUT" ;;
+          esac
+
       # No `continue-on-error` here and no `--reporter` override (that would
       # silently disable the json/allure-playwright reporters configured in
       # playwright.config.ts — confirmed live while building this suite) —
       # a real assertion failure should redden this job. Subsequent steps
       # use `if: always()` so the report still gets built either way.
-      - name: Run ${{ needs.determine-run.outputs.label }} suite
-        run: |
-          GREP="${{ needs.determine-run.outputs.grep }}"
-          if [ -n "$GREP" ]; then
-            npx playwright test ${{ needs.determine-run.outputs.dirs }} --project=functional-suite --workers=1 --grep "$GREP"
-          else
-            npx playwright test ${{ needs.determine-run.outputs.dirs }} --project=functional-suite --workers=1
-          fi
+      - name: Run ${{ inputs.suite }} suite
+        run: npx playwright test ${{ steps.dirs.outputs.dirs }} --project=functional-suite --workers=1
 
       - name: Generate test-case tracker (xlsx)
         if: always()
@@ -130,7 +82,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: functional-test-report-${{ needs.determine-run.outputs.label }}
+          name: functional-test-report
           path: final-report/
           retention-days: 30
           if-no-files-found: warn
